@@ -11,5 +11,5 @@ bot.on('spawn', () => {
     console.log('Bot conectado!')
 })
 
-bot.on('error', err => console.log('Erro: ' + err))
+bot.on('error', err => console.log('Erro: ' + err)) // Registra o error no console
 bot.on('end', () => console.log('Bot desconectado'))
