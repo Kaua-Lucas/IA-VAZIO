@@ -1,6 +1,4 @@
 # IA-VAZIO
-Claro! Aqui está um README personalizado para o seu projeto de bot de Minecraft que usa o Mineflayer:
-
 IA-VAZIO: Bot de Minecraft com Mineflayer
 Este repositório contém um bot de Minecraft desenvolvido em JavaScript utilizando a biblioteca Mineflayer. O bot é projetado para automatizar tarefas no jogo, explorar mundos e interagir com outros jogadores.
 
