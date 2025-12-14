@@ -1,25 +1,21 @@
+// --- IMPORTAÇÕES DE MÓDULOS ---
 const mineflayer = require('mineflayer');
 const { pathfinder, Movements, goals } = require('mineflayer-pathfinder');
 const { GoalFollow } = goals;
-const mcData = require('minecraft-data')
+const mcDataRequester = require('minecraft-data'); // Renomeado para evitar conflito
 const { Vec3 } = require('vec3');
 
-//-------------------------------------------------------------------------------\\
-
-//Importações criadas por mim
-//Onde nela tera lista de diversos itens,comidas,blocos, mobs e ate ferramentas
-
+// --- IMPORTAÇÕES CUSTOMIZADAS (Seus arquivos) ---
+// Onde nela tera lista de diversos itens,comidas,blocos, mobs e ate ferramentas
 const mob = require('./mobs/mobs.js');
-const espadas = require('./Equipamentos/ferramentas.js')
-const Ferramentas = require('./Equipamentos/ferramentas.js')
-const tipos_De_Blocos = require('./blocosEComida/tipoDeBlocos.js')
-const tipos_De_comidas = require('./blocosEComida/comestivel.js')
-var resetPvpMob = 0
+const espadas = require('./Equipamentos/ferramentas.js');
+const Ferramentas = require('./Equipamentos/ferramentas.js');
+const tipos_De_Blocos = require('./blocosEComida/tipoDeBlocos.js');
+const tipos_De_comidas = require('./blocosEComida/comestivel.js');
 
 //-------------------------------------------------------------------------------\\
 
-
-// Objeto de configuração
+// --- CONFIGURAÇÃO DO BOT ---
 const botConfig = {
   username: 'IA-Vazio',
 
@@ -28,257 +24,338 @@ const botConfig = {
   //port: '17968',
   //version: '1.20.4',
 
-  //local
-  host: 'localhost',
-  port: '30000',
-  version: '1.20.4',
-
+  //servidor
+  
+  host: 'nepotismo3.aternos.me',
+  port: '56723',
+  version: '1.21.9',
 
   hideErrors: false, // Mantenha como false para exibir erros durante o desenvolvimento
-  
-};//o nick da skin do vazio é: 6628
-const bot = mineflayer.createBot(botConfig);  
-module.exports = { bot }
+}; //o nick da skin do vazio é: 6628
 
-// Carrega o plugin pathfinder para seguir o jogador
+// --- VARIÁVEIS GLOBAIS ---
+let mcData; // Será inicializado no 'login'
+let andando = false;
+let mining = false;
+let blocksToMine = [];
+let blocksBroken = []; // Lista para armazenar blocos quebrados
+var resetPvpMob = 0;
+let velocidade = 0; // Variável global para armazenar a velocidade do bot
+let atividadeAtual = null; // Variável para armazenar a atividade atual do bot
+let comandoCopiado = null; // Variável para armazenar o comando copiado
+let botSilenciado = false; // Variável para controlar se o bot pode falar no chat
+
+// --- INICIALIZAÇÃO DO BOT ---
+const bot = mineflayer.createBot(botConfig);
+module.exports = { bot };
+
+// Carrega o plugin pathfinder
 bot.loadPlugin(pathfinder);
 
+//-------------------------------------------------------------------------------\\
+// --- FUNÇÕES DE CHAT E COMANDOS ---
+//-------------------------------------------------------------------------------\\
 
-let andando = false;
+/**
+ * Envia uma mensagem no chat, mas apenas se o bot não estiver silenciado.
+ * @param {string} mensagem - A mensagem a ser enviada.
+ */
+function safeBotChat(mensagem) {
+  if (!botSilenciado) {
+    bot.chat(mensagem);
+  } else {
+    console.log(`[CHAT SILENCIADO] ${mensagem}`);
+  }
+}
 
+// --- OUVINTES DE EVENTOS DO BOT (`bot.on`) ---
 
-
-
-
-
+/**
+ * Evento 'login': Disparado quando o bot entra no servidor com sucesso.
+ */
 bot.on('login', () => {
   console.log('Bot logado com sucesso!');
   const botSocket = bot._client.socket;
   console.log(`logged in to ${botSocket.server ? botSocket.server : botSocket._host}`);
   
+  // Inicializa o mcData com a versão correta do servidor
+  mcData = mcDataRequester(bot.version);
 });
 
+/**
+ * Evento 'end': Disparado quando o bot é desconectado.
+ */
 bot.on('end', () => {
   console.log(bot.username + " saiu do servidor");
-  // reconnect(); // Chame a função reconectar imediatamente
+  // reconnect(); // Chame a função reconectar imediatamente (se desejar)
 });
 
+/**
+ * Evento 'spawn': Disparado quando o bot (re)nasce no mundo.
+ */
 bot.on('spawn', async () => {
-monitorarVelocidade()
-console.log("Nasceu",Object.keys(bot.players))
+  monitorarVelocidade();
+  console.log("Nasceu", Object.keys(bot.players));
 
-if (blocksToMine.length > 0) {
-  bot.chat('Fui desconectado, mas estou retomando a mineração!');
-  mineNextBlock(bot);
-}
+  // Se estava minerando antes de cair, retoma a mineração
+  if (blocksToMine.length > 0) {
+    safeBotChat('Fui desconectado, mas estou retomando a mineração!');
+    mineNextBlock(bot);
+  }
+});
 
-
-})
+/**
+ * Evento 'death': Disparado quando o bot morre.
+ */
 bot.on('death', () => {
-  bot.chat('Morri! Tentando reconectar e continuar mineração...');
+  safeBotChat('Morri! Tentando reconectar e continuar mineração...');
   mining = false;
 });
 
+/**
+ * Evento 'health': Disparado quando a vida ou fome do bot mudam.
+ * Usado para lógica de comer automaticamente.
+ */
+bot.on('health', async () => {
+  console.log(`Vida: ${bot.health}/20, Fome: ${bot.food}/20`);
 
-
-
-
-
-bot.on("chat", async (username, message) => {
-  if (!message.startsWith("!drop")) return; // Ignora mensagens sem o comando "!drop"
-
-  const args = message.split(" ");
-
-  if (args.length < 4) {
-      bot.chat("Uso correto: !drop <x> <y> <z> [item]");
-      return;
-  }
-
-  const x = parseInt(args[1]);
-  const y = parseInt(args[2]);
-  const z = parseInt(args[3]);
-
-  if (isNaN(x) || isNaN(y) || isNaN(z)) {
-      bot.chat("Coordenadas inválidas! Use números.");
-      return;
-  }
-
-  const itemNome = args.length > 4 ? args[4] : "todos"; // Se não especificar item, dropa tudo
-
-  await dropItens(x, y, z, itemNome);
-});
-
-async function dropItens(x, y, z, itemNome = "todos") {
-  bot.chat(`Indo para as coordenadas (${x}, ${y}, ${z}) para dropar itens...`);
-
-  bot.pathfinder.setGoal(new goals.GoalBlock(x, y, z));
-
-  await bot.waitForTicks(40);
-
-  const inventario = bot.inventory.items();
-
-  if (inventario.length === 0) {
-      bot.chat("Não tenho itens para dropar!");
-      return;
-  }
-
-  bot.chat(`Dropando ${itemNome === "todos" ? "todos os itens" : itemNome}...`);
-
-  for (let item of inventario) {
-      if (itemNome === "todos" || item.name === itemNome) {
-          await bot.tossStack(item);
-          await bot.waitForTicks(10);
-      }
-  }
-
-  bot.chat("Itens dropados!");
-}
-
-
-
-
-
-
-
-
-
-
-
-
-
-bot.on('chat', async (username, message) => {
-  
- 
-// Supondo que o comando recebido esteja em uma variável chamada 'mensagem'
-let msg = message;
-
-// Usando uma expressão regular para remover tudo até (e incluindo) o primeiro `] `
-message = msg.replace(/.*\] /, '');
-
-// Agora 'mensagem' conterá apenas "me siga"
-console.log(message); // Saída: "me siga"
-  
-  
-
-  
- 
-  
-
-  if (username == bot.username){
-    
-    return;
-  }  // Ignora as próprias mensagens do bot
-  if(message === "onde está o bot"){
-    
-        
-        const { x, y, z } = bot.entity.position;
-        bot.chat(`A posição do jogador ${bot.username} é: X: ${x.toFixed(2)}, Y: ${y.toFixed(2)}, Z: ${z.toFixed(2)}`);
-  }
-  
-  const player = bot.players[username]?.entity;
-
-  //essa parte faz com que ele minere uma certa coodernada
-  const args = message.split(' ');
-        
-  if (args[0] === 'minerar') {
-      if (args.length < 7) {
-          bot.chat('Uso: minerar x1 y1 z1 x2 y2 z2');
-          return;
-      }
-      
-      const x1 = parseInt(args[1]);
-      const y1 = parseInt(args[2]);
-      const z1 = parseInt(args[3]);
-      const x2 = parseInt(args[4]);
-      const y2 = parseInt(args[5]);
-      const z2 = parseInt(args[6]);
-      
-      startMining(bot, new Vec3(x1, y1, z1), new Vec3(x2, y2, z2));
-  }
-  
-  if (message === 'parar') {
-      stopMining(bot);
-  }
-  
-  if (player) {
-    const distancia = bot.entity.position.distanceTo(player.position); // Calcula a distância entre o bot e o jogador
-    
-    if (distancia <= 35) { // Verifica se a distância é de 10 blocos ou menos
-      
-        
-
-      //codigo para fazer com que o bot siga o player
-      if (player) {
-        if (message === 'me siga') {
-          seguirJogador(player);
-        } else if (message === 'pare de me seguir') {
-          pararDeSeguir();
-        }
-      }
-      if(message=="terra"){
-        pegarTerra()
-      }
-      if(message=="graveto"){
-        fazerStick()
-      }
-      if(message == "tabua"){
-        fazerMadeira()
-      }
-      if(message== "craft"){
-        fazerCraftingTable()
-      }
-      if(message=="coloque"){
-        colocarCraftingTable()
-      }
-      if(message=="madeira"){
-        pegarMadeira()
-      }
-      if(message == "suba"){
-        voltarParaSuperfice()
-      }
-      if(message == "minerar"){
-        minerarStone()
-      }
-      if(message == "procure"){
-        ProcurarCraftingTable()
-      }
-      if(message =="ataque"){
-        ATKMonstros()
-      }
-      if (message === "criar picareta") {
-       craftPickaxe();
-
-      }
-      if(message === "machado"){
-        craftAxe()
-      }
-      if(message === "explore"){
-        explorarBiomas()
-      }
-      if(message === "durma"){
-        Dormir()
+  if (bot.food <= 17 && bot.health < 20) {
+    console.log('O bot está com fome e precisa comer!');
+    verificarEComer();
+  } else if (bot.food < 10) {
+    while (bot.food != 20) {
+      await bot.waitForTicks(120);
+      await verificarEComer();
+      if (bot.food == 20) {
+        break;
       }
     }
-  
   }
-
-
+  await bot.waitForTicks(40);
 });
 
+/**
+ * Evento 'error': Disparado quando ocorre um erro.
+ */
+bot.on('error', (err) => {
+  if (err.code === 'ECONNREFUSED') {
+    console.log(`Falha ao conectar a ${err.address}:${err.port}`);
+  } else {
+    console.log(`Erro não tratado: ${err}`);
+  }
+});
 
+/**
+ * OUVINTE DE CHAT PRINCIPAL
+ * Unifica toda a lógica de comandos do chat.
+ */
+bot.on("chat", async (username, message) => {
+  // Ignora as próprias mensagens do bot
+  if (username === bot.username) return;
 
+  // --- Comandos Globais (Funcionam em qualquer distância) ---
 
+  // Remove prefixos de rank/nick (ex: [Admin] Player: ...)
+  let msgLimpa = message.replace(/.*\] /, '');
+  console.log(`[CHAT] ${username}: ${message} (Limpa: ${msgLimpa})`);
 
+  // Comando para silenciar o bot
+  if (msgLimpa === '!silenciar') {
+    botSilenciado = true;
+    bot.chat('Ok, vou ficar quieto.'); // Uma última mensagem de confirmação
+    return;
+  }
 
+  // Comando para o bot voltar a falar
+  if (msgLimpa === '!falar') {
+    botSilenciado = false;
+    safeBotChat('Voltei a falar!');
+    return;
+  }
 
+  // Comando de Drop
+  if (message.startsWith("!drop")) {
+    const args = message.split(" ");
+    if (args.length < 4) {
+      safeBotChat("Uso correto: !drop <x> <y> <z> [item]");
+      return;
+    }
+    const x = parseInt(args[1]);
+    const y = parseInt(args[2]);
+    const z = parseInt(args[3]);
+    if (isNaN(x) || isNaN(y) || isNaN(z)) {
+      safeBotChat("Coordenadas inválidas! Use números.");
+      return;
+    }
+    const itemNome = args.length > 4 ? args[4] : "todos"; // Se não especificar item, dropa tudo
+    await dropItens(x, y, z, itemNome);
+    return;
+  }
+  
+  // Comando de Ajuda
+  if (msgLimpa === '!help') {
+    // Envia a mensagem de ajuda diretamente para o jogador, sem passar pelo safeBotChat
+    // Isso garante que a ajuda funcione mesmo se o bot estiver silenciado.
+    bot.whisper(username, `
+      Comandos disponíveis:
+      - !silenciar / !falar: Ativa ou desativa minhas mensagens no chat.
+      - !drop <x> <y> <z> [item]: Vou até as coords e dropo o item (ou tudo).
+      - !copia: <comando>: Copia um comando para ser executado após eu dormir.
+      - onde está o bot: Digo minhas coordenadas atuais.
+      - minerar <x1> <y1> <z1> <x2> <y2> <z2>: Minero uma área.
+      - parar: Paro a mineração ou de seguir.
+      - me siga / pare de me seguir: Começo ou paro de te seguir.
+      - durma: Tento dormir se for noite.
+      - equipar armadura: Equipa a melhor armadura do meu inventário.
+      - explore: Começo a explorar o mapa.
+      - E outros comandos de coleta/craft (madeira, terra, craft, etc.)
+    `);
+    return;
+  }
 
-let mining = false;
-let blocksToMine = [];
-let blocksBroken = []; // Lista para armazenar blocos quebrados
+  // Comando de Cópia (para loop pós-dormir)
+  if (message.startsWith('!copia:')) {
+    comandoCopiado = message.replace('!copia:', '').trim();
+    safeBotChat('Comando copiado');
+  }
+  
+  // Limpa o comando copiado se for um comando que não deve ser repetido
+  if (['me siga', 'pare de me seguir', 'Mineração concluída!', 'equipar armadura', 'explorar'].includes(msgLimpa)) {
+    comandoCopiado = null;
+  }
 
+  // Comando de Posição
+  if (msgLimpa === "onde está o bot") {
+    const { x, y, z } = bot.entity.position;
+    safeBotChat(`A posição do jogador ${bot.username} é: X: ${x.toFixed(2)}, Y: ${y.toFixed(2)}, Z: ${z.toFixed(2)}`);
+  }
+
+  // Comandos de Mineração (Área)
+  const args = msgLimpa.split(' ');
+  if (args[0] === 'minerar') {
+    if (args.length < 7) {
+      safeBotChat('Uso: minerar x1 y1 z1 x2 y2 z2');
+      return;
+    }
+    const x1 = parseInt(args[1]);
+    const y1 = parseInt(args[2]);
+    const z1 = parseInt(args[3]);
+    const x2 = parseInt(args[4]);
+    const y2 = parseInt(args[5]);
+    const z2 = parseInt(args[6]);
+    
+    atividadeAtual = 'minerar'; // Define a atividade
+    startMining(bot, new Vec3(x1, y1, z1), new Vec3(x2, y2, z2));
+    return;
+  }
+
+  // Comando de Parar
+  if (msgLimpa === 'parar') {
+    atividadeAtual = null; // Limpa a atividade
+    comandoCopiado = null; // Limpa o comando copiado
+    stopMining(bot);
+    pararDeSeguir(); // Também para de seguir
+    return;
+  }
+
+  // --- Comandos de Proximidade (Requerem que o jogador esteja perto) ---
+  const player = bot.players[username]?.entity;
+  if (!player) return; // Se o jogador não for encontrado, ignora o resto
+
+  const distancia = bot.entity.position.distanceTo(player.position);
+  if (distancia <= 35) {
+    // Comandos de Seguir
+    if (msgLimpa === 'me siga') {
+      atividadeAtual = 'seguir';
+      seguirJogador(player);
+    } else if (msgLimpa === 'pare de me seguir') {
+      atividadeAtual = null;
+      comandoCopiado = null;
+      pararDeSeguir();
+    }
+    
+    // Comandos de Coleta
+    if (msgLimpa === "terra") {
+      pegarTerra();
+    }
+    if (msgLimpa === "madeira") {
+      pegarMadeira();
+    }
+    if (msgLimpa === "minerar") { // Nota: Este comando está duplicado (um para área, outro para stone)
+      minerarStone(); // Este é o 'minerar' para stone
+    }
+    
+    // Comandos de Crafting
+    if (msgLimpa === "graveto") {
+      fazerStick();
+    }
+    if (msgLimpa === "tabua") {
+      fazerMadeira(); // Função de craftar tábuas
+    }
+    if (msgLimpa === "craft") {
+      fazerCraftingTable();
+    }
+    if (msgLimpa === "coloque") {
+      colocarCraftingTable();
+    }
+    if (msgLimpa === "procure") {
+      ProcurarCraftingTable();
+    }
+    if (msgLimpa === "criar picareta") {
+      craftPickaxe();
+    }
+    if (msgLimpa === "machado") {
+      craftAxe();
+    }
+    if (message === 'vem') {
+    const barco = bot.nearestEntity(e => 
+      e.name === 'boat' || e.name === 'chest_boat'
+    );
+    if (message === 'sair') {
+    if (bot.vehicle) {
+      bot.dismount();
+      console.log('Saí do barco!');
+    }
+  }
+    if (barco) {
+      bot.mount(barco);
+    }
+    }
+    // Comandos de Ação
+    if (msgLimpa === "ataque") {
+      ATKMonstros();
+    }
+    if (msgLimpa === "explore") {
+      atividadeAtual = 'explorar';
+      explorarBiomas();
+    }
+    if (msgLimpa === "durma") {
+      Dormir();
+    }
+    if (msgLimpa === "suba") {
+      voltarParaSuperfice();
+    }
+    
+    // Comando de Equipar
+    if (msgLimpa === 'equipar armadura') {
+      await equiparArmadura();
+    }
+  }
+});
+
+//-------------------------------------------------------------------------------\\
+// --- FUNÇÕES DE MINERAÇÃO E COLETA ---
+//-------------------------------------------------------------------------------\\
+
+/**
+ * Inicia a mineração em uma área definida por duas posições.
+ * @param {object} bot - A instância do bot.
+ * @param {Vec3} posA - Posição inicial (canto 1).
+ * @param {Vec3} posB - Posição final (canto 2).
+ */
 async function startMining(bot, posA, posB) {
   if (mining) {
-    bot.chat('Já estou minerando!');
+    safeBotChat('Já estou minerando!');
     return;
   }
   mining = true;
@@ -305,11 +382,17 @@ async function startMining(bot, posA, posB) {
   await mineNextBlock(bot, atualizarIntervalo); // Passa o intervalo para a função de mineração
 }
 
-// Modifica a função mineNextBlock para parar o intervalo quando a mineração terminar
+/**
+ * Minera o próximo bloco da lista 'blocksToMine'.
+ * @param {object} bot - A instância do bot.
+ * @param {NodeJS.Timeout} atualizarIntervalo - O ID do intervalo de atualização para poder pará-lo.
+ */
 async function mineNextBlock(bot, atualizarIntervalo) {
   if (!mining || blocksToMine.length === 0) {
     if (mining) {
-      bot.chat('Mineração concluída!');
+      safeBotChat('Mineração concluída!');
+      comandoCopiado = null; // Limpa o comando copiado
+      atividadeAtual = null; // Limpa a atividade
     }
     mining = false;
     clearInterval(atualizarIntervalo); // Para o intervalo quando a mineração termina
@@ -349,7 +432,9 @@ async function mineNextBlock(bot, atualizarIntervalo) {
   await mineNextBlock(bot, atualizarIntervalo); // Chama a função novamente para minerar o próximo bloco
 }
 
-// Atualiza a lista de blocos a serem minerados
+/**
+ * Atualiza a lista 'blocksToMine' com os blocos presentes na área definida.
+ */
 async function atualizarListaDeBlocos(bot, minX, maxX, minY, maxY, minZ, maxZ) {
   blocksToMine = []; // Limpa a lista atual
 
@@ -376,9 +461,10 @@ async function atualizarListaDeBlocos(bot, minX, maxX, minY, maxY, minZ, maxZ) {
   console.log("Lista de blocos a minerar atualizada:", blocksToMine.length);
 }
 
-// Verifica se todos os blocos foram quebrados
+/**
+ * Verifica e reporta o resultado da mineração.
+ */
 async function verificarBlocosQuebrados(bot) {
-  // Verifica se a lista de blocos quebrados está vazia ou se ainda existem blocos a serem minerados
   if (blocksToMine.length === 0 && blocksBroken.length > 0) {
     console.log("Todos os blocos foram minerados com sucesso.");
     console.log("Blocos quebrados:", blocksBroken.length);
@@ -387,196 +473,24 @@ async function verificarBlocosQuebrados(bot) {
   }
 }
 
+/**
+ * Para a atividade de mineração atual.
+ */
 function stopMining(bot) {
   if (!mining) {
-      bot.chat('Não estou minerando no momento!');
-      return;
+    safeBotChat('Não estou minerando no momento!');
+    return;
   }
   
   mining = false;
   blocksToMine = [];
-  bot.chat('Mineração interrompida!');
+  safeBotChat('Mineração interrompida!');
 }
 
-
-async function Dormir() {
-  const mcData = require('minecraft-data')(bot.version);
-  const cama = bot.findBlock({
-      matching: mcData.blocksByName.white_bed.id,
-      maxDistance: 30,
-  });
-
-  if (!cama) {
-      bot.chat("Não encontrei uma cama próxima!");
-      return;
-  }
-
-  bot.chat("Indo dormir...");
-  bot.pathfinder.setGoal(new goals.GoalBlock(cama.position.x - 1, cama.position.y, cama.position.z));
-
-  await bot.waitForTicks(20); // Espera um pouco antes de interagir
-
-  while(velocidade<=0){
-      // Olhar para a cama
-    await bot.lookAt(cama.position, true);
-
-    // Interagir com a cama
-    await bot.activateBlock(cama);
-
-    try {
-        await bot.sleep(cama);
-        bot.chat("Tentando dormir...");
-    } catch (err) {
-        bot.chat("Não consegui dormir! " + err.message);
-        return;
-    }
-
-    // Tempo máximo para dormir: 5 segundos
-    let tempoDormirMaximo = 5 * 1000;
-    let tempoInicio = Date.now();
-
-    while (!bot.isSleeping && Date.now() - tempoInicio < tempoDormirMaximo) {
-        await bot.waitForTicks(10);
-    }
-
-    // Se não conseguiu dormir, cancela a ação
-    if (!bot.isSleeping) {
-        bot.chat("Não consegui dormir a tempo, cancelando ação.");
-        return;
-    }
-
-    // Se dormiu, espera até amanhecer ou 10 segundos
-    let tempoMaximoDormindo = 10 * 1000;
-    tempoInicio = Date.now();
-
-    while (bot.isSleeping && Date.now() - tempoInicio < tempoMaximoDormindo) {
-        await bot.waitForTicks(10);
-    }
-
-    // Se ainda estiver dormindo, acorda
-    if (bot.isSleeping) {
-        bot.wake();
-        bot.chat("Acordei!");
-    }
-  }
-  
-}
-
-
-
-
-
-let velocidade = 0; // Variável global para armazenar a velocidade do bot
-
-function monitorarVelocidade() {
-    let ultimaPosicao = bot.entity.position.clone(); // Salva a posição inicial
-
-    setInterval(() => {
-        let posicaoAtual = bot.entity.position.clone();
-        velocidade = ultimaPosicao.distanceTo(posicaoAtual); // Calcula a velocidade
-
-        // Atualiza a última posição
-        ultimaPosicao = posicaoAtual;
-    }, 1000); // Atualiza a cada 1 segundo
-}
-
-
-
-// Listener para mudanças na saúde e fome do bot
-bot.on('health', async  () => {
-  
-  console.log(`Vida: ${bot.health}/20, Fome: ${bot.food}/20`);
- 
-
-  if (bot.food <= 17 && bot.health < 20) {
-    console.log('O bot está com fome e precisa comer!');
-    verificarEComer();
-    
-
-  }else if(bot.food < 10){
-
-    while(bot.food != 20){
-      await bot.waitForTicks(120)
-      await verificarEComer();
-      if(bot.food == 20 ){
-        break
-      }
-    }
-    
-  }
-  await bot.waitForTicks(40)
- 
- 
-
-    
-    
-    
-    
-    
-    
-
-  
-
-  
-});
-//
-// if(resetPvpMob == 1){
-//  setTimeout( ()=>  Monstros(10,1), 10000)
-//   resetPvpMob = 0
-//   console.log(resetPvpMob)
-// }
-// Evento disparado quando uma entidade toma dano
-
-// Função para o bot verificar e comer se tiver comida no inventário
-const itensComestiveis = tipos_De_comidas.itensComestiveis
-
-async function verificarEComer() {
-  const comida = bot.inventory.items().find(item => itensComestiveis.includes(item.name));
-
-  if (comida) {
-    console.log(`Bot encontrou ${comida.name}, tentando comer...`);
-
-    bot.equip(comida, 'hand', (err) => {
-      if (err) {
-        console.log('Erro ao equipar a comida:', err);
-        return;
-      }
-    });
-    await bot.waitForTicks(20)
-    bot.activateItem(); // Usa o item na mão para comer
-    console.log(`Bot comeu ${comida.name}`);
-  } else {
-    console.log('Nenhuma comida disponível no inventário.');
-  }
-}
-
-
-
-// Função para fazer o bot seguir o jogador
-async function seguirJogador(player) {
-  andando = true;
-  bot.chat('Estou seguindo você!');
-  
-
-  while (andando) {
-    await bot.waitForTicks(60);
-    bot.pathfinder.setGoal(new GoalFollow(player, 1));
-    olharParaPlayer(player);
-  }
-}
-
-
-
-// Função para o bot parar de seguir o jogador
-function pararDeSeguir() {
-  bot.pathfinder.setGoal(null);
-  bot.chat('Parei de seguir você.');
-  andando = false;
-}
-
-
-
-// Função para contar blocos de stone no inventário
+/**
+ * Conta quantos blocos de 'cobblestone' o bot tem.
+ * @returns {number} - A quantidade total de cobblestone.
+ */
 function contarBlocosDeStone() {
   let totalStone = 0;
   for (const item of bot.inventory.items()) {
@@ -587,78 +501,41 @@ function contarBlocosDeStone() {
   return totalStone;
 }
 
-
-
-// Função para minerar stone até ter 3 packs (192 blocos)
+/**
+ * Minera 'stone' até atingir 192 (3 packs) de 'cobblestone'.
+ */
 async function minerarStone() {
-  const mcData = require('minecraft-data')(bot.version);
-  
   while (contarBlocosDeStone() < 192) {
-    // Verificar se o bot está segurando uma picareta
-    
-    
-
     const stoneBlock = bot.findBlock({
       matching: mcData.blocksByName.stone.id,
       maxDistance: 64,
     });
 
     if (stoneBlock) {
-      
-        bot.pathfinder.setGoal(new goals.GoalBlock(stoneBlock.position.x, stoneBlock.position.y, stoneBlock.position.z), 0);
-
-        console.log("minerei:" , contarBlocosDeStone())
-
-        //bot.pathfinder.setGoal(new GoalFollow(player, 1));
-
-        
-          // await bot.waitForTicks(120);
-          // bot.dig(stoneBlock, { breakLevel: 1 });
-        
-      
-    }else{
-      bot.chat("Nenhuma Stone perto de mim")
-      break
+      bot.pathfinder.setGoal(new goals.GoalBlock(stoneBlock.position.x, stoneBlock.position.y, stoneBlock.position.z), 0);
+      console.log("minerei:", contarBlocosDeStone());
+      // NOTA: Esta função não chama bot.dig(). Ela apenas vai até o bloco.
+      // A quebra pode estar sendo feita por outro plugin ou manualmente.
+      // A função 'startMining' (linha 280) USA bot.dig().
+    } else {
+      safeBotChat("Nenhuma Stone perto de mim");
+      break;
     }
-
     await bot.waitForTicks(60);
   }
-  if(contarBlocosDeStone() >= 192){
-    bot.chat("ja tenho 3 packs no meu inventario, não preciso minerar");
-    console.log("voltando pra superfice apos ter minerado...")
-    await voltarParaSuperfice()
-    console.log("voltei pra superfice") 
-  }
   
-
-}
-
-
-
-// implementa e faz com que o bot volte para a superfice    
-async function voltarParaSuperfice() {
-  const mcData = require('minecraft-data')(bot.version);
-
-  const grass = bot.findBlock({
-    matching: mcData.blocksByName.short_grass.id, //depois ver se dar pra entrgar outros blocos aqui usando||
-    maxDistance: 40000 
-  });
-
-  if (grass) {
-    
-      bot.pathfinder.setGoal(new goals.GoalBlock(grass.position.x, grass.position.y, grass.position.z));
-      
-
-      
-      
-    
-  }else{
-    bot.chat("não consigo voltar pra superfice")
+  if (contarBlocosDeStone() >= 192) {
+    safeBotChat("ja tenho 3 packs no meu inventario, não preciso minerar");
+    console.log("voltando pra superfice apos ter minerado...");
+    await voltarParaSuperfice();
+    console.log("voltei pra superfice");
   }
 }
 
-
-
+/**
+ * Conta quantos troncos ('oak_log') o bot tem.
+ * @returns {number} - A quantidade total de troncos.
+ */
 function contarBlocosDeMadeira() {
   let totalMadeira = 0;
   for (const item of bot.inventory.items()) {
@@ -669,602 +546,141 @@ function contarBlocosDeMadeira() {
   return totalMadeira;
 }
 
-
-
+/**
+ * Coleta troncos ('oak_log') até ter 20.
+ */
 async function pegarMadeira() {
-  const mcData = require('minecraft-data')(bot.version);
-
   while (contarBlocosDeMadeira() < 20) {
-    // Encontre um bloco de madeira próximo para o bot pegar
     const madeira = bot.findBlock({
       matching: mcData.blocksByName.oak_log.id,
-      maxDistance: 100, // Reduza o alcance para não buscar tão longe
+      maxDistance: 100,
     });
 
     if (madeira) {
-      // Define a meta do bot como o bloco de madeira encontrado
       bot.pathfinder.setGoal(new goals.GoalBlock(madeira.position.x, madeira.position.y, madeira.position.z));
-
-      // Aguarde até o bot chegar ao bloco e quebrá-lo
-      await bot.waitForTicks(120)
-
+      await bot.waitForTicks(120);
+      // NOTA: Esta função também não chama bot.dig().
       console.log("Troncos:", contarBlocosDeMadeira());
     } else {
-      bot.chat("Não consegui encontrar madeira");
-      break; // Sai do loop se não encontrar mais madeira
+      safeBotChat("Não consegui encontrar madeira");
+      break;
     }
-
-    // Aguarda para evitar um loop muito rápido
     await bot.waitForTicks(20);
   }
-
-  bot.chat("Agora tenho 20 troncos de madeira!");
+  safeBotChat("Agora tenho 20 troncos de madeira!");
 }
 
-
-
-// Função para o bot olhar para o jogador
-function olharParaPlayer(player) {
-  const posicaoPlayer = player.position.offset(0, player.height, 0); // Posição com ajuste de altura do jogador
-  bot.lookAt(posicaoPlayer, true); // O 'true' faz o bot olhar suavemente
-
-}
-
-// implementa e faz ele procurar uma crafttable
-async function ProcurarCraftingTable() {
-  const mcData = require('minecraft-data')(bot.version);
-
-  const CraftingTable = bot.findBlock({
-    matching: mcData.blocksByName.crafting_table.id, //depois ver se dar pra entrgar outros blocos aqui usando||
-    maxDistance: 100
-  });
-  await bot.waitForTicks(60)
-  
-  if (CraftingTable) {
-    
-    bot.pathfinder.setGoal(new goals.GoalBlock(CraftingTable.position.x -1, CraftingTable.position.y, CraftingTable.position.z))
-    await bot.waitForTicks(60)
-    bot.look(-1.5,-0.5,0)
-    // bot.activateBlock() //pesquisar depois como usar esse codigo
-  }else{
-    bot.chat("Não encontrei uma crafting table")
-  }
-}
-
-
-//faz uma picareta de madeira
-async function craftPickaxe() {
-  const tiposDeTabuas = tipos_De_Blocos.tiposDeTabuas
-  const mcData = require('minecraft-data')(bot.version);
-
-  await ProcurarCraftingTable()
-  let totalDeStick = 0 
-  let totalDeMadeira = 0 
-
-  for (const item of bot.inventory.items()) {
-    if (item.name === 'stick') {
-      totalDeStick += item.count;
-    }
-    contadorDeLista = 0
-    while(contadorDeLista != tiposDeTabuas.length){
-      if(item.name === tiposDeTabuas[contadorDeLista]){
-        
-        totalDeMadeira += item.count;
-      }
-      contadorDeLista ++
-    }
-    
-  }
-  
-
-  if(totalDeStick < 2 && totalDeMadeira < 3){
-    console.log(`Não tenho madeira e Stick suficiente, so tenho ${totalDeStick} Sticks e tenho ${totalDeMadeira} madeiras`);
-    return
-  }
-  const craftingTable = bot.findBlock({
-    matching: mcData.blocksByName.crafting_table.id,
-    maxDistance: 6  // Ajuste a distância conforme necessário
-  });
-
-  if (!craftingTable) {
-    console.log("Erro: Mesa de trabalho não encontrada por perto. Coloque uma mesa de trabalho próxima ao bot.");
-    return; // Sai da função se não houver uma mesa de trabalho
-  }
-  await bot.waitForTicks(20)
-  const recipe = bot.recipesFor(mcData.itemsByName.wooden_pickaxe.id, null, 1, craftingTable)[0];
-
-  if (recipe) {
-    try {
-      await bot.craft(recipe, 1, craftingTable);
-      console.log("Picareta de madeira criada com sucesso!");
-    } catch (err) {
-      console.log("Erro ao criar a picareta:", err);
-    }
-  } else {
-    console.log("Erro: Receita para picareta de madeira não encontrada.");
-  }
-}
-
-//faz uma Machado de madeira
-async function craftAxe() {
-  const tiposDeTabuas = tipos_De_Blocos.tiposDeTabuas
-  const mcData = require('minecraft-data')(bot.version);
-
-  await ProcurarCraftingTable()
-  let totalDeStick = 0 
-  let totalDeMadeira = 0 
-
-  for (const item of bot.inventory.items()) {
-    if (item.name === 'stick') {
-      totalDeStick += item.count;
-    }
-    contadorDeLista = 0
-    while(contadorDeLista != tiposDeTabuas.length){
-      if(item.name === tiposDeTabuas[contadorDeLista]){
-        
-        totalDeMadeira += item.count;
-      }
-      contadorDeLista ++
-    }
-    
-  }
-  
-
-  if(totalDeStick < 2 && totalDeMadeira < 3){
-    console.log(`Não tenho madeira e Stick suficiente, so tenho ${totalDeStick} Sticks e tenho ${totalDeMadeira} madeiras`);
-    return
-  }
-  const craftingTable = bot.findBlock({
-    matching: mcData.blocksByName.crafting_table.id,
-    maxDistance: 6  // Ajuste a distância conforme necessário
-  });
-
-  if (!craftingTable) {
-    console.log("Erro: Mesa de trabalho não encontrada por perto. Coloque uma mesa de trabalho próxima ao bot.");
-    return; // Sai da função se não houver uma mesa de trabalho
-  }
-  await bot.waitForTicks(20)
-  const recipe = bot.recipesFor(mcData.itemsByName.wooden_axe.id, null, 1, craftingTable)[0];
-
-  if (recipe) {
-    try {
-      await bot.craft(recipe, 1, craftingTable);
-      console.log("Machado de madeira criada com sucesso!");
-    } catch (err) {
-      console.log("Erro ao criar a Machado:", err);
-    }
-  } else {
-    console.log("Erro: Receita para Machado de madeira não encontrada.");
-  }
-}
-//faz uma espada de madeira
-async function craftSword() {
-  const tiposDeTabuas = tipos_De_Blocos.tiposDeTabuas
-  const mcData = require('minecraft-data')(bot.version);
-
-  await ProcurarCraftingTable()
-  let totalDeStick = 0 
-  let totalDeMadeira = 0 
-
-  for (const item of bot.inventory.items()) {
-    if (item.name === 'stick') {
-      totalDeStick += item.count;
-    }
-    contadorDeLista = 0
-    while(contadorDeLista != tiposDeTabuas.length){
-      if(item.name === tiposDeTabuas[contadorDeLista]){
-        
-        totalDeMadeira += item.count;
-      }
-      contadorDeLista ++
-    }
-    
-  }
-  
-
-  if(totalDeStick < 2 && totalDeMadeira < 2){
-    console.log(`Não tenho madeira e Stick suficiente, so tenho ${totalDeStick} Sticks e tenho ${totalDeMadeira} madeiras`);
-    return
-  }
-  const craftingTable = bot.findBlock({
-    matching: mcData.blocksByName.crafting_table.id,
-    maxDistance: 6  // Ajuste a distância conforme necessário
-  });
-
-  if (!craftingTable) {
-    console.log("Erro: Mesa de trabalho não encontrada por perto. Coloque uma mesa de trabalho próxima ao bot.");
-    return; // Sai da função se não houver uma mesa de trabalho
-  }
-  await bot.waitForTicks(20)
-  const recipe = bot.recipesFor(mcData.itemsByName.wooden_sword.id, null, 1, craftingTable)[0];
-
-  if (recipe) {
-    try {
-      await bot.craft(recipe, 1, craftingTable);
-      console.log("espada de madeira criada com sucesso!");
-    } catch (err) {
-      console.log("Erro ao criar a espada:", err);
-    }
-  } else {
-    console.log("Erro: Receita para espada de madeira não encontrada.");
-  }
-}
-//faz uma pá de madeira
-async function craftShovel() {
-  const tiposDeTabuas = tipos_De_Blocos.tiposDeTabuas
-  const mcData = require('minecraft-data')(bot.version);
-
-  await ProcurarCraftingTable()
-  let totalDeStick = 0 
-  let totalDeMadeira = 0 
-
-  for (const item of bot.inventory.items()) {
-    if (item.name === 'stick') {
-      totalDeStick += item.count;
-    }
-    contadorDeLista = 0
-    while(contadorDeLista != tiposDeTabuas.length){
-      if(item.name === tiposDeTabuas[contadorDeLista]){
-        
-        totalDeMadeira += item.count;
-      }
-      contadorDeLista ++
-    }
-    
-  }
-  
-
-  if(totalDeStick < 2 && totalDeMadeira < 1){
-    console.log(`Não tenho madeira e Stick suficiente, so tenho ${totalDeStick} Sticks e tenho ${totalDeMadeira} madeiras`);
-    return
-  }
-  const craftingTable = bot.findBlock({
-    matching: mcData.blocksByName.crafting_table.id,
-    maxDistance: 6  // Ajuste a distância conforme necessário
-  });
-
-  if (!craftingTable) {
-    console.log("Erro: Mesa de trabalho não encontrada por perto. Coloque uma mesa de trabalho próxima ao bot.");
-    return; // Sai da função se não houver uma mesa de trabalho
-  }
-  await bot.waitForTicks(20)
-  const recipe = bot.recipesFor(mcData.itemsByName.wooden_shovel.id, null, 1, craftingTable)[0];
-
-  if (recipe) {
-    try {
-      await bot.craft(recipe, 1, craftingTable);
-      console.log("pá de madeira criada com sucesso!");
-    } catch (err) {
-      console.log("Erro ao criar a pá:", err);
-    }
-  } else {
-    console.log("Erro: Receita para pá de madeira não encontrada.");
-  }
-}
-
-
+/**
+ * Conta quantos blocos de 'dirt' o bot tem.
+ * @returns {number} - A quantidade total de terra.
+ */
 function contarBlocosDeTerra() {
   let totalTerra = 0;
   for (const item of bot.inventory.items()) {
-    if (item.name ==='dirt') {
+    if (item.name === 'dirt') {
       totalTerra += item.count;
     }
   }
   return totalTerra;
 }
 
-
-
+/**
+ * Coleta 'dirt' (terra) até ter 64 (1 pack).
+ */
 async function pegarTerra() {
-  const mcData = require('minecraft-data')(bot.version);
-
   while (contarBlocosDeTerra() < 64) {
-    // Encontre um bloco de madeira próximo para o bot pegar
     const Terra = bot.findBlock({
-      matching: mcData.blocksByName.grass_block.id,
-      maxDistance: 10000, // Reduza o alcance para não buscar tão longe
+      matching: mcData.blocksByName.grass_block.id, // Procura por grama
+      maxDistance: 10000,
     });
 
     if (Terra) {
-      // Define a meta do bot como o bloco de madeira encontrado
       bot.pathfinder.setGoal(new goals.GoalBlock(Terra.position.x, Terra.position.y, Terra.position.z));
-
-      // Aguarde até o bot chegar ao bloco e quebrá-lo
-      await bot.waitForTicks(120)
-
+      await bot.waitForTicks(120);
+      // NOTA: Esta função também não chama bot.dig().
       console.log("Terra:", contarBlocosDeTerra());
     } else {
-      bot.chat("Não consegui encontrar Terra");
-      break; // Sai do loop se não encontrar mais Terra
+      safeBotChat("Não consegui encontrar Terra");
+      break;
     }
-
-    // Aguarda para evitar um loop muito rápido
     await bot.waitForTicks(20);
   }
-
-  bot.chat("Agora tenho 64 blocos de Terra!");
-  voltarParaSuperfice()
+  safeBotChat("Agora tenho 64 blocos de Terra!");
+  voltarParaSuperfice();
 }
 
+//-------------------------------------------------------------------------------\\
+// --- FUNÇÕES DE MOVIMENTAÇÃO E SEGUIR ---
+//-------------------------------------------------------------------------------\\
 
-//função de se reconectar
-const reconnect = async () => {
-  console.log('Tentando reconectar...');
-  try {
-    await new Promise(resolve => setTimeout(resolve, 5000)); // Espere 5 segundos
-    await bot.end(); // Encerre explicitamente a instância atual do bot
-    await mineflayer.createBot(botConfig); // Crie uma nova instância do bot
-    console.log('Reconectado!');
-  } catch (error) {
-    console.error('Erro ao reconectar:', error);
+/**
+ * Faz o bot seguir um jogador alvo.
+ * @param {object} player - A entidade do jogador a seguir.
+ */
+async function seguirJogador(player) {
+  andando = true;
+  safeBotChat('Estou seguindo você!');
+
+  while (andando) {
+    await bot.waitForTicks(60);
+    bot.pathfinder.setGoal(new GoalFollow(player, 1));
+    olharParaPlayer(player);
   }
-};
-
-async function fazerStick() {
-  // Verifique se o bot tem madeira suficiente (4 blocos de madeira)
-  const tabuas = bot.inventory.items().find(item => item.name.includes('planks'));
-  if (!tabuas || tabuas.count < 2) {
-    bot.chat("Não tenho tabuas suficiente para fazer um Stick.");
-    return;
-  }
-
-  // Obtenha os dados da crafting table do Minecraft
-  const mcDataVersion = mcData(bot.version);
-  const tabua = bot.recipesFor(mcDataVersion.itemsByName.stick.id, null, 1,bot.inventory);
-
-  // Verifique se há uma receita para a crafting table
-  if (tabua.length === 0) {
-    bot.chat("Não encontrei a receita para o Stick.");
-    return;
-  }
-  //teste
-  // Crafta a mesa de trabalho
-  try {
-    await bot.craft(tabua[0], 1, null);
-    bot.chat("Stick criada com sucesso!");
-  } catch (err) {
-    bot.chat("Erro ao criar o stick.");
-    console.error(err);
-    return;
-  }
-
- 
 }
 
-async function fazerMadeira() {
-  // Verifique se o bot tem madeira suficiente (4 blocos de madeira)
-  const troncoss = bot.inventory.items().find(item => item.name.includes('log'));
-  if (!troncoss || troncoss.count < 1) {
-    bot.chat("Não tenho troncos suficientes para fazer madeira.");
-    return;
+/**
+ * Faz o bot parar de seguir o jogador.
+ */
+function pararDeSeguir() {
+  if (andando) {
+    bot.pathfinder.setGoal(null);
+    safeBotChat('Parei de seguir você.');
+    andando = false;
   }
-
-  // Obtenha os dados da crafting table do Minecraft
-  const mcDataVersion = mcData(bot.version);
-        const tabua = bot.recipesFor(mcDataVersion.itemsByName.oak_planks.id, null, 1,bot.inventory);
-  //Depois fazer uma variavelconfig  \-------------------------------------/ que se encaixe aqui e seja funcional, so que na function madeira e tronco
-  // Verifique se há uma receita para a crafting table
-  if (tabua.length === 0) {
-    bot.chat("Não encontrei a receita para madeira.");
-    return;
-  }
-  //teste
-  // Crafta a mesa de trabalho
-  try {
-    await bot.craft(tabua[0], 1, null);
-    bot.chat("Madeira criada com sucesso!");
-  } catch (err) {
-    bot.chat("Erro ao criar o Madeira.");
-    console.error(err);
-    return;
-  }
-
- 
 }
 
-async function fazerCraftingTable() {
-  // Verifique se o bot tem madeira suficiente (4 blocos de madeira)
-  const madeira = bot.inventory.items().find(item => item.name.includes('planks'));
-  if (!madeira || madeira.count < 4) {
-    bot.chat("Não tenho madeira suficiente para fazer uma mesa de trabalho.");
-    return;
-  }
-
-  // Obtenha os dados da crafting table do Minecraft
-  const mcDataVersion = mcData(bot.version);
-  const craftingTableRecipe = bot.recipesFor(mcDataVersion.itemsByName.crafting_table.id, null, 1, bot.inventory);
-
-  // Verifique se há uma receita para a crafting table
-  if (craftingTableRecipe.length === 0) {
-    bot.chat("Não encontrei a receita para a mesa de trabalho.");
-    return;
-  }
-
-  // Crafta a mesa de trabalho
-  try {
-    await bot.craft(craftingTableRecipe[0], 1, null);
-    bot.chat("Mesa de trabalho criada com sucesso!");
-  } catch (err) {
-    bot.chat("Erro ao criar a mesa de trabalho.");
-    console.error(err);
-    return;
-  }
-
-  // Coloque a mesa de trabalho no chão
-  colocarCraftingTable();
+/**
+ * Faz o bot olhar para a entidade do jogador.
+ * @param {object} player - A entidade do jogador.
+ */
+function olharParaPlayer(player) {
+  const posicaoPlayer = player.position.offset(0, player.height, 0);
+  bot.lookAt(posicaoPlayer, true);
 }
 
+/**
+ * Tenta encontrar um bloco de grama e ir até ele (voltar à superfície).
+ */
+async function voltarParaSuperfice() {
+  const grass = bot.findBlock({
+    matching: mcData.blocksByName.short_grass.id,
+    maxDistance: 40000
+  });
 
-
-async function equiparFerramentaCerta(bloco) {
-
-  const Ferramentas = require('./Equipamentos/ferramentas.js')
-
-  let ferramenta;
-
-
-  // Percorre o objeto para encontrar a ferramenta adequada
-  for (const [ferramentaNome, blocos] of Object.entries(Ferramentas.ferramentasBlocos)) {
-    if (blocos.some(b => bloco.name.includes(b))) {
-      ferramenta = bot.inventory.items().find(item => item.name.includes(ferramentaNome));
-      break;
-    }
-  }
-
-
-
-
-  // Equipa a ferramenta caso encontrada no inventário
-  if (ferramenta) {
-    try {
-      await bot.equip(ferramenta, 'hand');
-      console.log(`Equipado com ${ferramenta.name}`);
-    } catch (error) {
-      console.log(`Erro ao equipar ${ferramenta.name}:`, error.message);
-    }
+  if (grass) {
+    bot.pathfinder.setGoal(new goals.GoalBlock(grass.position.x, grass.position.y, grass.position.z));
   } else {
-    console.log("Ferramenta apropriada não encontrada no inventário!");
+    safeBotChat("não consigo voltar pra superfice");
   }
 }
 
-async function colocarCraftingTable() {
-  // Verifique se o bot tem uma mesa de trabalho no inventário
-  
-
-  // await andarPraFrenteERetornar()
-  
-  const mesaTrabalho = bot.inventory.items().find(item => item.name === 'crafting_table');
-  const block = bot.blockAt(bot.entity.position.offset(1, 0, 0));
-  
-  if (mesaTrabalho) {
-    try {
-
-      
-
-      await equiparFerramentaCerta(block)
-      // Encontre um bloco ao lado para colocar a mesa de trabalho
-      const blocoAlvo = bot.blockAt(bot.entity.position.offset(1, -1, 0)); // bloco ao lado do bot
-      await bot.dig(block)
-      await bot.waitForTicks(60)
-      bot.equip(mesaTrabalho, 'hand');
-      if (blocoAlvo) {
-        await bot.placeBlock(blocoAlvo, { x: 0, y: 1, z: 0 });
-        bot.chat("Mesa de trabalho colocada no chão!");
-
-      } else {
-        bot.chat("Não há espaço adequado para colocar a mesa de trabalho.");
-        
-        
-      }
-      
-    } catch (err) {
-      
-      bot.chat("Erro ao colocar a mesa de trabalho no chão.");
-      console.error(err);
-    }
-
-
-
-  } else {
-    bot.chat("Não encontrei a mesa de trabalho no inventário.");
-  }
-}
- 
-async function equiparEspada() {
-  // Lista de espadas em ordem de prioridade (mais forte para mais fraca)
-  const swords = espadas.swords
-  
-  // Procurar a espada mais forte no inventário
-  const espada = bot.inventory.items().find(item => swords.includes(item.name));
-  
-  // Se uma espada foi encontrada, tentar equipá-la
-  if (espada) {
-    try {
-      await bot.equip(espada, 'hand');
-      console.log(`Equipada: ${espada.name}`);
-    } catch (error) {
-      console.error('Erro ao equipar a espada:', error.message);
-    }
-  } else {
-    console.log('Nenhuma espada encontrada no inventário.');
-  }
-}
-
-
-
-
-//aqui faz com que ele ataque qualquer monstro dentro da lisa fornecida
-async function ATKMonstros(distanciaMaxima = 10,  maxAlvos = 1) {//distancia passiva: 4 / agressiva é 10
-  
-  while (true) {
-    try {
-      const mobs = mob.Mobs_Hostis
-    
-      // Encontrar todos os monstros e ordená-los pela distância
-      const monstros = Object.values(bot.entities)
-        .filter(entity => mobs.includes(entity.name) )
-        .sort((a, b) => {
-          const distanciaA = bot.entity.position.distanceTo(a.position);
-          const distanciaB = bot.entity.position.distanceTo(b.position);
-          return distanciaA - distanciaB;
-        })
-
-      // Atacar os monstros mais próximos (até o limite de maxAlvos)
-      let numAlvos = 0;
-      
-      for (const Mob of monstros) {
-        const distancia = bot.entity.position.distanceTo(Mob.position);
-        if (distancia <= distanciaMaxima) {
-          
-           equiparEspada() 
-           bot.pathfinder.setGoal(new GoalFollow(Mob, 2.5))
-          
-          
-          
-          bot.lookAt(Mob.position.offset(0, Mob.height, 0));
-          bot.attack(Mob);
-          
-          numAlvos++;
-          if (numAlvos >= maxAlvos) {
-
-            break;
-          }
-        }else if(distancia>4&&distancia<=10){
-          await bot.waitForTicks(80)
-          resetPvpMob = 1
-        }
-
-      }
-
-      // Aguardar um tempo antes de procurar novos zumbis
-      await bot.waitForTicks(10);
-    } catch (error) {
-      console.error('Ocorreu um erro:', error.message);
-      bot.chat('Ocorreu um erro ao tentar interagir com os zumbis.');
-      break;
-    }
-  }
-}
-
-
-
-// Função para explorar diferentes biomas
+/**
+ * Inicia um loop para o bot explorar biomas aleatoriamente.
+ */
 function explorarBiomas() {
-  bot.chat("okay")
+  safeBotChat("okay");
   setInterval(() => {
-    
-
-    // Mover em uma direção aleatória
     moverParaDirecaoAleatoria();
-  }, 240000); // Explora a cada 4min 
+  }, 240000); // Explora a cada 4min
 }
 
-// Função para mover o bot em uma direção aleatória
+/**
+ * Define um objetivo aleatório para o bot se mover.
+ */
 function moverParaDirecaoAleatoria() {
   const movements = new Movements(bot, mcData);
   bot.pathfinder.setMovements(movements);
 
-  // Gera uma coordenada aleatória
   const x = bot.entity.position.x + Math.floor(Math.random() * 1000 - 50);
   const z = bot.entity.position.z + Math.floor(Math.random() * 1000 - 50);
   const y = bot.entity.position.y;
@@ -1279,81 +695,683 @@ function moverParaDirecaoAleatoria() {
   }
 }
 
+//-------------------------------------------------------------------------------\\
+// --- FUNÇÕES DE CRAFTING E INVENTÁRIO ---
+//-------------------------------------------------------------------------------\\
 
+/**
+ * Droppa itens do inventário em coordenadas específicas.
+ * @param {number} x - Coordenada X.
+ * @param {number} y - Coordenada Y.
+ * @param {number} z - Coordenada Z.
+ * @param {string} itemNome - Nome do item para dropar, ou "todos".
+ */
+async function dropItens(x, y, z, itemNome = "todos") {
+  safeBotChat(`Indo para as coordenadas (${x}, ${y}, ${z}) para dropar itens...`);
+  bot.pathfinder.setGoal(new goals.GoalBlock(x, y, z));
+  await bot.waitForTicks(40);
 
-bot.on('error', (err) => {
-  if (err.code === 'ECONNREFUSED') {
-    console.log(`Falha ao conectar a ${err.address}:${err.port}`);
-  } else {
-    console.log(`Erro não tratado: ${err}`);
+  const inventario = bot.inventory.items();
+  if (inventario.length === 0) {
+    safeBotChat("Não tenho itens para dropar!");
+    return;
   }
-});
 
+  safeBotChat(`Dropando ${itemNome === "todos" ? "todos os itens" : itemNome}...`);
+  for (let item of inventario) {
+    if (itemNome === "todos" || item.name === itemNome) {
+      try {
+        await bot.tossStack(item);
+        await bot.waitForTicks(10);
+      } catch (err) {
+        console.log(`Erro ao dropar ${item.name}: ${err.message}`);
+      }
+    }
+  }
+  safeBotChat("Itens dropados!");
+}
 
+/**
+ * Procura e vai até uma crafting table próxima.
+ */
+async function ProcurarCraftingTable() {
+  const CraftingTable = bot.findBlock({
+    matching: mcData.blocksByName.crafting_table.id,
+    maxDistance: 100
+  });
+  await bot.waitForTicks(60);
+  
+  if (CraftingTable) {
+    bot.pathfinder.setGoal(new goals.GoalBlock(CraftingTable.position.x - 1, CraftingTable.position.y, CraftingTable.position.z));
+    await bot.waitForTicks(60);
+    bot.look(-1.5, -0.5, 0);
+  } else {
+    safeBotChat("Não encontrei uma crafting table");
+  }
+}
 
+/**
+ * Crafta uma picareta de madeira (wooden_pickaxe).
+ */
+async function craftPickaxe() {
+  const tiposDeTabuas = tipos_De_Blocos.tiposDeTabuas;
+  await ProcurarCraftingTable();
+  
+  let totalDeStick = 0;
+  let totalDeMadeira = 0;
 
+  for (const item of bot.inventory.items()) {
+    if (item.name === 'stick') {
+      totalDeStick += item.count;
+    }
+    let contadorDeLista = 0;
+    while (contadorDeLista != tiposDeTabuas.length) {
+      if (item.name === tiposDeTabuas[contadorDeLista]) {
+        totalDeMadeira += item.count;
+      }
+      contadorDeLista++;
+    }
+  }
 
+  if (totalDeStick < 2 || totalDeMadeira < 3) {
+    console.log(`Não tenho madeira e Stick suficiente, so tenho ${totalDeStick} Sticks e tenho ${totalDeMadeira} madeiras`);
+    return;
+  }
+  
+  const craftingTable = bot.findBlock({
+    matching: mcData.blocksByName.crafting_table.id,
+    maxDistance: 6
+  });
 
+  if (!craftingTable) {
+    console.log("Erro: Mesa de trabalho não encontrada por perto.");
+    return;
+  }
+  
+  await bot.waitForTicks(20);
+  const recipe = bot.recipesFor(mcData.itemsByName.wooden_pickaxe.id, null, 1, craftingTable)[0];
 
+  if (recipe) {
+    try {
+      await bot.craft(recipe, 1, craftingTable);
+      console.log("Picareta de madeira criada com sucesso!");
+    } catch (err) {
+      console.log("Erro ao criar a picareta:", err);
+    }
+  } else {
+    console.log("Erro: Receita para picareta de madeira não encontrada.");
+  }
+}
 
+/**
+ * Crafta um machado de madeira (wooden_axe).
+ */
+async function craftAxe() {
+  const tiposDeTabuas = tipos_De_Blocos.tiposDeTabuas;
+  await ProcurarCraftingTable();
+  
+  let totalDeStick = 0;
+  let totalDeMadeira = 0;
 
+  //... (lógica de contagem de itens igual a craftPickaxe) ...
+  for (const item of bot.inventory.items()) {
+    if (item.name === 'stick') {
+      totalDeStick += item.count;
+    }
+    let contadorDeLista = 0;
+    while (contadorDeLista != tiposDeTabuas.length) {
+      if (item.name === tiposDeTabuas[contadorDeLista]) {
+        totalDeMadeira += item.count;
+      }
+      contadorDeLista++;
+    }
+  }
 
+  if (totalDeStick < 2 || totalDeMadeira < 3) {
+    console.log(`Não tenho madeira e Stick suficiente, so tenho ${totalDeStick} Sticks e tenho ${totalDeMadeira} madeiras`);
+    return;
+  }
 
+  const craftingTable = bot.findBlock({
+    matching: mcData.blocksByName.crafting_table.id,
+    maxDistance: 6
+  });
 
+  if (!craftingTable) {
+    console.log("Erro: Mesa de trabalho não encontrada por perto.");
+    return;
+  }
+  
+  await bot.waitForTicks(20);
+  const recipe = bot.recipesFor(mcData.itemsByName.wooden_axe.id, null, 1, craftingTable)[0];
 
-//comandos em fase de teste
+  if (recipe) {
+    try {
+      await bot.craft(recipe, 1, craftingTable);
+      console.log("Machado de madeira criada com sucesso!");
+    } catch (err) {
+      console.log("Erro ao criar a Machado:", err);
+    }
+  } else {
+    console.log("Erro: Receita para Machado de madeira não encontrada.");
+  }
+}
 
-let atividadeAtual = null; // Variável para armazenar a atividade atual do bot
+/**
+ * Crafta uma espada de madeira (wooden_sword).
+ */
+async function craftSword() {
+  const tiposDeTabuas = tipos_De_Blocos.tiposDeTabuas;
+  await ProcurarCraftingTable();
+  
+  let totalDeStick = 0;
+  let totalDeMadeira = 0;
+  
+  //... (lógica de contagem de itens igual a craftPickaxe) ...
+  for (const item of bot.inventory.items()) {
+    if (item.name === 'stick') {
+      totalDeStick += item.count;
+    }
+    let contadorDeLista = 0;
+    while (contadorDeLista != tiposDeTabuas.length) {
+      if (item.name === tiposDeTabuas[contadorDeLista]) {
+        totalDeMadeira += item.count;
+      }
+      contadorDeLista++;
+    }
+  }
 
+  if (totalDeStick < 1 || totalDeMadeira < 2) { // Requisitos diferentes para espada
+    console.log(`Não tenho madeira e Stick suficiente, so tenho ${totalDeStick} Sticks e tenho ${totalDeMadeira} madeiras`);
+    return;
+  }
+
+  const craftingTable = bot.findBlock({
+    matching: mcData.blocksByName.crafting_table.id,
+    maxDistance: 6
+  });
+
+  if (!craftingTable) {
+    console.log("Erro: Mesa de trabalho não encontrada por perto.");
+    return;
+  }
+
+  await bot.waitForTicks(20);
+  const recipe = bot.recipesFor(mcData.itemsByName.wooden_sword.id, null, 1, craftingTable)[0];
+
+  if (recipe) {
+    try {
+      await bot.craft(recipe, 1, craftingTable);
+      console.log("espada de madeira criada com sucesso!");
+    } catch (err) {
+      console.log("Erro ao criar a espada:", err);
+    }
+  } else {
+    console.log("Erro: Receita para espada de madeira não encontrada.");
+  }
+}
+
+/**
+ * Crafta uma pá de madeira (wooden_shovel).
+ */
+async function craftShovel() {
+  const tiposDeTabuas = tipos_De_Blocos.tiposDeTabuas;
+  await ProcurarCraftingTable();
+  
+  let totalDeStick = 0;
+  let totalDeMadeira = 0;
+  
+  //... (lógica de contagem de itens igual a craftPickaxe) ...
+  for (const item of bot.inventory.items()) {
+    if (item.name === 'stick') {
+      totalDeStick += item.count;
+    }
+    let contadorDeLista = 0;
+    while (contadorDeLista != tiposDeTabuas.length) {
+      if (item.name === tiposDeTabuas[contadorDeLista]) {
+        totalDeMadeira += item.count;
+      }
+      contadorDeLista++;
+    }
+  }
+
+  if (totalDeStick < 2 || totalDeMadeira < 1) { // Requisitos diferentes para pá
+    console.log(`Não tenho madeira e Stick suficiente, so tenho ${totalDeStick} Sticks e tenho ${totalDeMadeira} madeiras`);
+    return;
+  }
+  
+  const craftingTable = bot.findBlock({
+    matching: mcData.blocksByName.crafting_table.id,
+    maxDistance: 6
+  });
+
+  if (!craftingTable) {
+    console.log("Erro: Mesa de trabalho não encontrada por perto.");
+    return;
+  }
+  
+  await bot.waitForTicks(20);
+  const recipe = bot.recipesFor(mcData.itemsByName.wooden_shovel.id, null, 1, craftingTable)[0];
+
+  if (recipe) {
+    try {
+      await bot.craft(recipe, 1, craftingTable);
+      console.log("pá de madeira criada com sucesso!");
+    } catch (err) {
+      console.log("Erro ao criar a pá:", err);
+    }
+  } else {
+    console.log("Erro: Receita para pá de madeira não encontrada.");
+  }
+}
+
+/**
+ * Crafta gravetos (stick) a partir de tábuas.
+ */
+async function fazerStick() {
+  const tabuas = bot.inventory.items().find(item => item.name.includes('planks'));
+  if (!tabuas || tabuas.count < 2) {
+    safeBotChat("Não tenho tabuas suficiente para fazer um Stick.");
+    return;
+  }
+  
+  const tabuaRecipe = bot.recipesFor(mcData.itemsByName.stick.id, null, 1, bot.inventory);
+  if (tabuaRecipe.length === 0) {
+    safeBotChat("Não encontrei a receita para o Stick.");
+    return;
+  }
+  
+  try {
+    await bot.craft(tabuaRecipe[0], 1, null);
+    safeBotChat("Stick criada com sucesso!");
+  } catch (err) {
+    safeBotChat("Erro ao criar o stick.");
+    console.error(err);
+  }
+}
+
+/**
+ * Crafta tábuas (oak_planks) a partir de troncos.
+ */
+async function fazerMadeira() {
+  const troncoss = bot.inventory.items().find(item => item.name.includes('log'));
+  if (!troncoss || troncoss.count < 1) {
+    safeBotChat("Não tenho troncos suficientes para fazer madeira.");
+    return;
+  }
+
+  const tabuaRecipe = bot.recipesFor(mcData.itemsByName.oak_planks.id, null, 1, bot.inventory);
+  if (tabuaRecipe.length === 0) {
+    safeBotChat("Não encontrei a receita para madeira.");
+    return;
+  }
+  
+  try {
+    await bot.craft(tabuaRecipe[0], 1, null);
+    safeBotChat("Madeira criada com sucesso!");
+  } catch (err) {
+    safeBotChat("Erro ao criar o Madeira.");
+    console.error(err);
+  }
+}
+
+/**
+ * Crafta uma mesa de trabalho (crafting_table) e a coloca no chão.
+ */
+async function fazerCraftingTable() {
+  const madeira = bot.inventory.items().find(item => item.name.includes('planks'));
+  if (!madeira || madeira.count < 4) {
+    safeBotChat("Não tenho madeira suficiente para fazer uma mesa de trabalho.");
+    return;
+  }
+
+  const craftingTableRecipe = bot.recipesFor(mcData.itemsByName.crafting_table.id, null, 1, bot.inventory);
+  if (craftingTableRecipe.length === 0) {
+    safeBotChat("Não encontrei a receita para a mesa de trabalho.");
+    return;
+  }
+
+  try {
+    await bot.craft(craftingTableRecipe[0], 1, null);
+    safeBotChat("Mesa de trabalho criada com sucesso!");
+  } catch (err) {
+    safeBotChat("Erro ao criar a mesa de trabalho.");
+    console.error(err);
+    return;
+  }
+  
+  // Coloque a mesa de trabalho no chão
+  await colocarCraftingTable();
+}
+
+/**
+ * Coloca uma mesa de trabalho (crafting_table) do inventário no mundo.
+ */
+async function colocarCraftingTable() {
+  const mesaTrabalho = bot.inventory.items().find(item => item.name === 'crafting_table');
+  const block = bot.blockAt(bot.entity.position.offset(1, 0, 0)); // Bloco à frente
+  
+  if (mesaTrabalho) {
+    try {
+      await equiparFerramentaCerta(block); // Equipa ferramenta (provavelmente para quebrar grama/etc)
+      
+      const blocoAlvo = bot.blockAt(bot.entity.position.offset(1, -1, 0)); // Bloco no chão, à frente
+      
+      // Limpa o espaço se necessário
+      if (block && block.name !== 'air') {
+        await bot.dig(block);
+        await bot.waitForTicks(60);
+      }
+      
+      bot.equip(mesaTrabalho, 'hand');
+      
+      if (blocoAlvo) {
+        // Tenta colocar a mesa no blocoAlvo (chão)
+        await bot.placeBlock(blocoAlvo, new Vec3(0, 1, 0)); // Vec3(0, 1, 0) significa "em cima"
+        safeBotChat("Mesa de trabalho colocada no chão!");
+      } else {
+        safeBotChat("Não há espaço adequado para colocar a mesa de trabalho.");
+      }
+    } catch (err) {
+      safeBotChat("Erro ao colocar a mesa de trabalho no chão.");
+      console.error(err);
+    }
+  } else {
+    safeBotChat("Não encontrei a mesa de trabalho no inventário.");
+  }
+}
+
+//-------------------------------------------------------------------------------\\
+// --- FUNÇÕES DE COMBATE E EQUIPAMENTOS ---
+//-------------------------------------------------------------------------------\\
+
+/**
+ * Equipa a ferramenta correta para quebrar um determinado bloco.
+ * @param {object} bloco - O bloco que o bot pretende quebrar.
+ */
+async function equiparFerramentaCerta(bloco) {
+  let ferramenta;
+
+  // Percorre o objeto para encontrar a ferramenta adequada
+  for (const [ferramentaNome, blocos] of Object.entries(Ferramentas.ferramentasBlocos)) {
+    if (blocos.some(b => bloco.name.includes(b))) {
+      ferramenta = bot.inventory.items().find(item => item.name.includes(ferramentaNome));
+      break;
+    }
+  }
+
+  // Equipa a ferramenta caso encontrada no inventário
+  if (ferramenta) {
+    try {
+      await bot.equip(ferramenta, 'hand');
+      console.log(`Equipado com ${ferramenta.name}`);
+    } catch (error) {
+      console.log(`Erro ao equipar ${ferramenta.name}:`, error.message);
+    }
+  } else {
+    console.log("Ferramenta apropriada não encontrada no inventário!");
+  }
+}
+
+/**
+ * Equipa a melhor espada disponível no inventário.
+ */
+async function equiparEspada() {
+  const swords = espadas.swords;
+  const espada = bot.inventory.items().find(item => swords.includes(item.name));
+  
+  if (espada) {
+    try {
+      await bot.equip(espada, 'hand');
+      console.log(`Equipada: ${espada.name}`);
+    } catch (error) {
+      console.error('Erro ao equipar a espada:', error.message);
+    }
+  } else {
+    console.log('Nenhuma espada encontrada no inventário.');
+  }
+}
+
+const materialPriority = [
+    'netherite',
+    'diamond',
+    'iron',
+    'chainmail',
+    'golden',
+    'leather',
+    'turtle' // Prioridade especial para o casco de tartaruga
+];
+
+/**
+ * Define o mapeamento de quais tipos de item vão em quais slots.
+ */
+const slotMapping = {
+    'head': ['helmet', 'turtle_shell'], // Slot 'head' aceita 'helmet' e 'turtle_shell'
+    'torso': ['chestplate', 'elytra'], // Slot 'torso' aceita 'chestplate' e 'elytra'
+    'legs': ['leggings'], // Slot 'legs' aceita 'leggings'
+    'feet': ['boots'] // Slot 'feet' aceita 'boots'
+};
+
+/**
+ * Equipa as melhores peças de armadura disponíveis no inventário,
+ * usando a lista de armaduras de 'ferramentas.js'.
+ */
+async function equiparArmadura() {
+    console.log("Verificando e equipando a melhor armadura...");
+    
+    // 1. Pega a lista de TODAS as armaduras do seu arquivo ferramentas.js
+    const allArmorItems = espadas.armor; 
+    
+    // 2. Pega todos os itens do inventário do bot
+    const inventoryItems = bot.inventory.items();
+
+    // 3. Filtra o inventário para conter APENAS os itens que estão na sua lista 'espadas.armor'
+    const armorInInventory = inventoryItems.filter(item => allArmorItems.includes(item.name));
+
+    // 4. Itera sobre cada SLOT de destino (cabeça, peito, pernas, pés)
+    //    Isso cumpre seu requisito de "loop 4 vezes"
+    for (const slot of ['head', 'torso', 'legs', 'feet']) {
+        
+        // Pega os tipos de item para este slot (ex: ['helmet', 'turtle_shell'])
+        const itemTypesForSlot = slotMapping[slot]; 
+        
+        let bestItem = null;
+        let bestPriority = -1; // Usamos -1 para garantir que qualquer item seja melhor
+
+        // 5. Cria a "categoria" de itens para este slot
+        //    (ex: todos os capacetes que o bot possui)
+        const compatibleItems = armorInInventory.filter(item => {
+            // Verifica se o nome do item termina com o tipo (ex: 'diamond_helmet' termina com 'helmet')
+            // ou se é um item especial (ex: 'turtle_shell' é 'turtle_shell')
+            return itemTypesForSlot.some(type => item.name.endsWith(type) || item.name === type);
+        });
+
+        // 6. Se o bot tem itens para este slot, acha o MELHOR
+        if (compatibleItems.length > 0) {
+            
+            // Lida com a 'elytra' como um caso especial de alta prioridade
+            if (slot === 'torso') {
+                const elytra = compatibleItems.find(item => item.name === 'elytra');
+                if (elytra) {
+                    bestItem = elytra;
+                    bestPriority = 99; // Prioridade máxima
+                }
+            }
+
+            // Itera sobre os materiais (Netherite, Diamond, etc.) para achar o melhor
+            for (const item of compatibleItems) {
+                // Se já achamos a elytra, não precisamos procurar mais por peitorais
+                if (bestPriority === 99) break; 
+
+                let currentPriority = -1;
+                for (let i = 0; i < materialPriority.length; i++) {
+                    if (item.name.startsWith(materialPriority[i])) {
+                        // Prioridade mais alta = 0 (netherite), mais baixa = 5 (leather)
+                        // Invertemos para que a prioridade mais alta tenha o maior número
+                        currentPriority = materialPriority.length - i;
+                        break;
+                    }
+                }
+
+                // Se este item for melhor que o 'bestItem' anterior, ele se torna o novo 'bestItem'
+                if (currentPriority > bestPriority) {
+                    bestPriority = currentPriority;
+                    bestItem = item;
+                }
+            }
+        }
+
+        // 7. Depois de achar o melhor item, equipa-o
+        if (bestItem) {
+            try {
+                // O bot.equip é inteligente, ele só troca se o item for diferente
+                await bot.equip(bestItem, slot);
+                console.log(`Equipado no slot ${slot}: ${bestItem.name}`);
+            } catch (err) {
+                console.error(`Erro ao equipar ${bestItem.name} no slot ${slot}: ${err.message}`);
+            }
+        } else {
+            // Informa se não achou nada para este slot específico
+            console.log(`Nenhuma armadura encontrada no inventário para o slot: ${slot}`);
+        }
+    }
+    
+    console.log("Verificação de armadura concluída.");
+    safeBotChat("Armadura verificada e equipada!");
+}
+
+/**
+ * Procura e ataca monstros hostis próximos.
+ * @param {number} distanciaMaxima - Distância máxima para procurar alvos.
+ * @param {number} maxAlvos - Número máximo de alvos para atacar de uma vez.
+ */
+async function ATKMonstros(distanciaMaxima = 10, maxAlvos = 1) {
+  while (true) {
+    try {
+      const mobsHostis = mob.Mobs_Hostis;
+    
+      // Encontrar todos os monstros e ordená-los pela distância
+      const monstros = Object.values(bot.entities)
+        .filter(entity => mobsHostis.includes(entity.name))
+        .sort((a, b) => {
+          const distanciaA = bot.entity.position.distanceTo(a.position);
+          const distanciaB = bot.entity.position.distanceTo(b.position);
+          return distanciaA - distanciaB;
+        });
+
+      let numAlvos = 0;
+      
+      for (const Mob of monstros) {
+        const distancia = bot.entity.position.distanceTo(Mob.position);
+        if (distancia <= distanciaMaxima) {
+          
+           equiparEspada();
+           bot.pathfinder.setGoal(new GoalFollow(Mob, 2.5));
+          
+          bot.lookAt(Mob.position.offset(0, Mob.height, 0));
+          bot.attack(Mob);
+          
+          numAlvos++;
+          if (numAlvos >= maxAlvos) {
+            break;
+          }
+        } else if (distancia > 4 && distancia <= 10) {
+          await bot.waitForTicks(80);
+          resetPvpMob = 1;
+        }
+      }
+
+      await bot.waitForTicks(10);
+    } catch (error) {
+      console.error('Ocorreu um erro:', error.message);
+      safeBotChat('Ocorreu um erro ao tentar interagir com os zumbis.');
+      break;
+    }
+  }
+}
+
+//-------------------------------------------------------------------------------\\
+// --- FUNÇÕES DE SOBREVIVÊNCIA (COMER, DORMIR) ---
+//-------------------------------------------------------------------------------\\
+
+/**
+ * Tenta encontrar e comer o primeiro item comestível do inventário.
+ */
+async function verificarEComer() {
+  const itensComestiveis = tipos_De_comidas.itensComestiveis;
+  const comida = bot.inventory.items().find(item => itensComestiveis.includes(item.name));
+
+  if (comida) {
+    console.log(`Bot encontrou ${comida.name}, tentando comer...`);
+    try {
+      await bot.equip(comida, 'hand');
+      await bot.waitForTicks(20);
+      bot.activateItem();
+      console.log(`Bot comeu ${comida.name}`);
+    } catch (err) {
+      console.log('Erro ao equipar/comer a comida:', err);
+    }
+  } else {
+    console.log('Nenhuma comida disponível no inventário.');
+  }
+}
+
+/**
+ * Lógica principal para fazer o bot dormir (versão "em teste" / melhorada).
+ * Procura uma cama e tenta dormir se for noite.
+ */
 async function Dormir() {
-  const mcData = require('minecraft-data')(bot.version);
   const cama = bot.findBlock({
-    matching: mcData.blocksByName.white_bed.id,
+    matching: mcData.blocksByName.white_bed.id, // TODO: Adicionar outras cores de cama
     maxDistance: 30,
   });
 
   if (!cama) {
-    bot.chat("Não encontrei uma cama próxima!");
+    safeBotChat("Não encontrei uma cama próxima!");
     return;
   }
 
-  bot.chat("Indo dormir...");
-  await bot.waitForTicks(20); // Espera um pouco antes de interagir 
-  bot.pathfinder.setGoal(new goals.GoalBlock(cama.position.x - 2, cama.position.y, cama.position.z - 2));
+  safeBotChat("Indo dormir...");
+  await bot.waitForTicks(20);
+  bot.pathfinder.setGoal(new goals.GoalBlock(cama.position.x - 2, cama.position.y, cama.position.z - 2)); // Vai para perto da cama
+  await bot.waitForTicks(20);
 
-  await bot.waitForTicks(20); // Espera um pouco antes de interagir
-
+  // Tenta dormir apenas se estiver perto da cama E for noite
   while (velocidade <= 0 && (bot.time.timeOfDay >= 13000 && bot.time.timeOfDay <= 23000)) {
     await tentarDormir(cama);
   }
 }
 
+/**
+ * Função auxiliar para 'Dormir'. Tenta interagir com a cama.
+ * @param {object} cama - O bloco da cama.
+ */
 async function tentarDormir(cama) {
   await bot.lookAt(cama.position, true);
   await bot.activateBlock(cama);
 
   try {
     await bot.sleep(cama);
-    bot.chat("Tentando dormir...");
+    safeBotChat("Tentando dormir...");
   } catch (err) {
-
-    bot.chat("Não consegui dormir! " + err.message);
-    // reconnect(); // Reconecta o bot se não conseguir dormir 
+    safeBotChat("Não consegui dormir! " + err.message);
     return;
   }
 
   let tempoDormirMaximo = 5 * 1000;
   let tempoInicio = Date.now();
 
+  // Espera até estar dormindo
   while (!bot.isSleeping && Date.now() - tempoInicio < tempoDormirMaximo) {
     await bot.waitForTicks(10);
   }
 
   if (!bot.isSleeping) {
-    bot.chat("Não consegui dormir a tempo, cancelando ação.");
+    safeBotChat("Não consegui dormir a tempo, cancelando ação.");
     return;
   }
 
+  // Espera até acordar (amanhecer)
   let tempoMaximoDormindo = 10 * 1000;
   tempoInicio = Date.now();
 
@@ -1361,143 +1379,137 @@ async function tentarDormir(cama) {
     await bot.waitForTicks(20);
   }
 
-  if (bot.isSleeping ) {
+  // Acorda manualmente se ainda estiver dormindo (raro)
+  if (bot.isSleeping) {
     bot.wake();
-    bot.chat("Acordei!");
+    safeBotChat("Acordei!");
   }
-
-
-  
 }
 
+//-------------------------------------------------------------------------------\\
+// --- FUNÇÕES DE CICLO DIA/NOITE E TAREFAS ---
+//-------------------------------------------------------------------------------\\
 
+/**
+ * Verifica se é noite no jogo.
+ * @returns {boolean} - True se for noite, false caso contrário.
+ */
 async function verificarSeEstaAnoitecendo() {
   const time = bot.time.timeOfDay;
-  const isNight = time >= 13000 && time <= 23000; // Verifica se está entre 13000 e 23000 ticks (noite no Minecraft)
-
-  if (isNight) {
-    bot.chat("Está ficando de noite, vou tentar dormir.");
-    if (atividadeAtual) {
-      bot.chat(`Interrompendo a atividade atual: ${atividadeAtual}`);
-      await bot.waitForTicks(40); // Aguarda um pouco antes de interromper  
-      if (atividadeAtual === 'minerar') {
-        bot.chat("parar");
-        await bot.waitForTicks(60); // Aguarda um pouco antes de parar
-        atividadeAtual = null;
-      } else if (atividadeAtual === 'seguir') {
-        pararDeSeguir();
-      }
-      // Adicione outras atividades que precisam ser interrompidas aqui
-    }
-    await bot.waitForTicks(40); // Aguarda um pouco antes de dormir 
-    await Dormir();
-    if (atividadeAtual) {
-      bot.chat(`Retomando a atividade: ${atividadeAtual}`);
-      if (atividadeAtual === 'minerar') {
-        startMining(bot, posA, posB); // Certifique-se de que posA e posB estejam definidas corretamente
-      } else if (atividadeAtual === 'seguir') {
-        seguirJogador(player); // Certifique-se de que player esteja definido corretamente
-      }
-      // Adicione outras atividades que precisam ser retomadas aqui
-    }
-  }
-  
+  const isNight = time >= 13000 && time <= 23000; // Noite no Minecraft
+  return isNight;
 }
 
-
-
-
-
-//fazer com que ele quando acordar verique se estava minerando antes de dormir e se estava, ele volta a minerar dizendo 'minerar' no chat atribuindo a atividade atual como minerar e fazer co que ele volte a minerar novamente isso serve tbm pra o copiado
-
-
-
-
+/**
+ * Verifica se é dia no jogo.
+ * @returns {boolean} - True se for dia, false caso contrário.
+ */
 async function verificarSeEstaDeDia() {
   const time = bot.time.timeOfDay;
-  const isDay = time < 13000 || time > 23000; // Verifica se está fora do intervalo de noite no Minecraft
+  const isDay = time < 13000 || time > 23000; // Dia no Minecraft
   return isDay;
 }
 
-function monitorarTempo() {
+/**
+ * Monitora o tempo do jogo para dormir e retomar tarefas.
+ */
+async function monitorarTempo() {
   setInterval(async () => {
-    await verificarSeEstaAnoitecendo();
+    const isNight = await verificarSeEstaAnoitecendo();
 
-    const isDay = await verificarSeEstaDeDia();
-    console.log('isDay:', isDay, ", comandoCopiado:", comandoCopiado  , ", atividadeAtual:", atividadeAtual);
-    if (isDay && comandoCopiado !== null && comandoCopiado !== '' && (atividadeAtual == null || atividadeAtual !== null)) {//problema aqui na atividade atual
-      bot.chat(comandoCopiado);
+    // Lógica para dormir
+    if (isNight) {
+      safeBotChat("Está ficando de noite, vou tentar dormir.");
+      if (atividadeAtual) {
+        safeBotChat(`Interrompendo a atividade atual: ${atividadeAtual}`);
+        await bot.waitForTicks(40);
+        
+        if (atividadeAtual === 'minerar') {
+          // A função 'parar' já envia msg e limpa 'atividadeAtual'
+          bot.emit('chat', bot.username, 'parar'); 
+        } else if (atividadeAtual === 'seguir') {
+          pararDeSeguir();
+          atividadeAtual = null;
+        }
+        // Adicione outras atividades que precisam ser interrompidas aqui
+      }
+      await bot.waitForTicks(40);
+      await Dormir();
     }
-  }, 0.30 * 60 * 1000); // 4 minutos em milissegundos
+
+    // Lógica para retomar tarefas
+    const isDay = await verificarSeEstaDeDia();
+    console.log('isDay:', isDay, ", comandoCopiado:", comandoCopiado, ", atividadeAtual:", atividadeAtual);
+    
+    // Se for dia, E tiver um comando copiado, E não estiver fazendo nada
+    if (isDay && comandoCopiado !== null && comandoCopiado !== '' && atividadeAtual === null) {
+      safeBotChat(`Retomando comando: ${comandoCopiado}`);
+      // Emite o comando no chat como se o bot mesmo tivesse digitado
+      // O ouvinte de chat principal irá pegá-lo
+      bot.emit('chat', bot.username, comandoCopiado); 
+      // Não limpa o comando copiado aqui, deixa o próprio comando limpar (como 'parar' faz)
+    }
+  }, 30 * 1000); // Verifica a cada 30 segundos (reduzido de 4 min para testes)
 }
-// Chama a função para começar a monitorar o tempo
+
+// Inicia o monitoramento do tempo
 monitorarTempo();
 
-async function equiparArmadura() {
-  const tiposDeArmadura = ['helmet', 'chestplate', 'leggings', 'boots'];
-  const mcData = require('minecraft-data')(bot.version);
+//-------------------------------------------------------------------------------\\
+// --- FUNÇÕES UTILITÁRIAS E GERAIS ---
+//-------------------------------------------------------------------------------\\
 
-  for (const tipo of tiposDeArmadura) {
-    const armadura = bot.inventory.items().find(item => item.name.includes(tipo));
-    if (armadura) {
-      try {
-        await bot.equip(armadura, tipo);
-        bot.chat(`Equipada: ${armadura.name}`);
-      } catch (error) {
-        bot.chat(`Erro ao equipar ${tipo}: ${error.message}`);
+/**
+ * Monitora a velocidade do bot, atualizando a variável global 'velocidade'.
+ */
+function monitorarVelocidade() {
+  let ultimaPosicao = bot.entity.position.clone();
+
+  setInterval(() => {
+    let posicaoAtual = bot.entity.position.clone();
+    velocidade = ultimaPosicao.distanceTo(posicaoAtual); // Distância percorrida no último segundo
+    ultimaPosicao = posicaoAtual;
+  }, 1000); // Atualiza a cada 1 segundo
+}
+
+
+
+// Monitorar quando o jogador monta em um barco
+bot.on('entityMoved', (entity) => {
+  if (entity.username && entity.vehicle) {
+    // Se algum jogador montou em um veículo
+    const vehicleType = entity.vehicle.name;
+    
+    if (vehicleType === 'oak_boat' || vehicleType === 'chest_boat') {
+      // Procurar outro barco próximo para o bot
+      const barcoProximo = bot.nearestEntity(e => {
+        return (e.name === 'boat' || e.name === 'chest_boat') && 
+               e.id !== entity.vehicle.id && // Não é o barco do jogador
+               bot.entity.position.distanceTo(e.position) < 5;
+      });
+      
+      if (barcoProximo && !bot.vehicle) {
+        bot.mount(barcoProximo);
+        console.log('Montei no barco para acompanhar!');
       }
     }
   }
-}
-
-bot.on('chat', async (username, message) => {
-  if (username === bot.username) return; // Ignora as próprias mensagens do bot
-
-  const args = message.split(' ');
-
-  if (message === '!help') {
-    const helpMessage = `
-      Comandos disponíveis:
-      - minerar x1 y1 z1 x2 y2 z2: Inicia a mineração entre as coordenadas especificadas.
-      - parar: Interrompe a mineração.
-      - me siga: Faz o bot seguir o jogador.
-      - pare de me seguir: Faz o bot parar de seguir o jogador.
-      - durma: Faz o bot dormir se for noite.
-      - equipar armadura: Equipa a armadura do inventário.
-      - explore: Faz o bot explorar biomas.
-    `;
-    bot.chat(username, helpMessage);
-  }
-
-  if (args[0] === 'minerar') {
-    atividadeAtual = 'minerar';
-  }
-
-  if (message === 'parar') {
-    
-    await bot.waitForTicks(40);
-    stopMining(bot);
-  }
-
-  if (message === 'equipar armadura') {
-    await equiparArmadura();
-  }
 });
 
-//copiador de comando de chat
-//ele simplesmente ira copiar o comando que o jogador digitar e ira colar no chat do bot pra fazer um loop apos acordar ja que todos os comando foram limpados ao dormir
 
 
-let comandoCopiado = null; // Variável para armazenar o comando copiado
-bot.on('chat', (username, message) => {
-  if (message.startsWith('!copia:')) {
-    comandoCopiado = message.replace('!copia:', '').trim();
-    bot.chat('Comando copiado');
+
+/**
+ * Tenta se reconectar ao servidor (atualmente não usada).
+ */
+const reconnect = async () => {
+  console.log('Tentando reconectar...');
+  try {
+    await new Promise(resolve => setTimeout(resolve, 5000)); // Espere 5 segundos
+    await bot.end();
+    await mineflayer.createBot(botConfig);
+    console.log('Reconectado!');
+  } catch (error) {
+    console.error('Erro ao reconectar:', error);
   }
-
-  if( message === 'me siga' || message === 'pare de me seguir' || message === 'Mineração concluída!' || message === 'equipar armadura' || message === 'explorar'){
-    comandoCopiado = null; // Limpa o comando copiado após a execução
-   
-   
-  }
-});
+};

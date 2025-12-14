@@ -34,4 +34,48 @@ const ferramentasBlocos = {
     ]
   };
 
-module.exports = { swords, ferramentasBlocos}
+  // --- LISTA DE ARMADURAS ---
+  // Adicionadas todas as armaduras de jogador
+  const armor = [
+    // Leather
+    'leather_helmet',
+    'leather_chestplate',
+    'leather_leggings',
+    'leather_boots',
+
+    // Chainmail
+    'chainmail_helmet',
+    'chainmail_chestplate',
+    'chainmail_leggings',
+    'chainmail_boots',
+
+    // Iron
+    'iron_helmet',
+    'iron_chestplate',
+    'iron_leggings',
+    'iron_boots',
+
+    // Gold
+    'golden_helmet',
+    'golden_chestplate',
+    'golden_leggings',
+    'golden_boots',
+
+    // Diamond
+    'diamond_helmet',
+    'diamond_chestplate',
+    'diamond_leggings',
+    'diamond_boots',
+
+    // Netherite
+    'netherite_helmet',
+    'netherite_chestplate',
+    'netherite_leggings',
+    'netherite_boots',
+
+    // Especiais
+    'turtle_shell', // Conta como capacete (helmet)
+    'elytra'        // Conta como peitoral (chestplate)
+  ];
+
+module.exports = { swords, ferramentasBlocos, armor}
